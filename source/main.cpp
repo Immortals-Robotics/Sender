@@ -15,7 +15,7 @@
 
 static constexpr uint8_t  DEMO_PAYLOAD_SIZE  = 10;
 static constexpr uint8_t  CHANNEL_CHANGE_ID  = 80;
-static constexpr int      DEFAULT_CHANNEL    = 110;
+static constexpr int      DEFAULT_CHANNEL    = 90;
 static constexpr uint16_t UDP_PORT           = 60005;
 static constexpr const char* MULTICAST_GROUP = "224.5.92.5";
 
@@ -41,9 +41,8 @@ void sendToRobot(uint8_t robot_id, const uint8_t* payload, uint8_t len)
     {
         printf("[ERROR] Radio failure detected, reinitializing...\n");
         radio.begin();
-        radio.setPayloadSize(DEMO_PAYLOAD_SIZE);
-        radio.setDataRate(RF24_250KBPS);
-        radio.setCRCLength(RF24_CRC_8);
+        radio.setDataRate(RF24_2MBPS);
+        radio.enableDynamicPayloads();
         radio.setPALevel(RF24_PA_MAX);
         radio.setAutoAck(false);
         radio.setChannel(channel);
@@ -128,9 +127,8 @@ int main()
         return -1;
     }
 
-    radio.setPayloadSize(DEMO_PAYLOAD_SIZE);
-    radio.setDataRate(RF24_250KBPS);
-    radio.setCRCLength(RF24_CRC_8);
+    radio.setDataRate(RF24_2MBPS);
+    radio.enableDynamicPayloads();
     radio.setPALevel(RF24_PA_MAX);
     radio.setAutoAck(false);
     radio.setChannel(channel);
