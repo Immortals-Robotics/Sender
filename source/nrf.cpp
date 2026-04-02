@@ -146,8 +146,3 @@ bool firstPacketReceived()
 {
     return s_firstPacketReceived;
 }
-
-void nrfPrintDiagnostics()
-{
-    radio.printPrettyDetails();
-}

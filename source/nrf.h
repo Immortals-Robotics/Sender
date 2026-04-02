@@ -10,5 +10,3 @@ void demo();
 void processPacket(std::span<const uint8_t> packet);
 
 bool firstPacketReceived();
-
-void nrfPrintDiagnostics();

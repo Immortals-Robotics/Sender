@@ -7,7 +7,6 @@
 #include <unistd.h>
 
 #include <cstdio>
-#include <ctime>
 #include <span>
 
 int main()
@@ -23,17 +22,8 @@ int main()
     sockaddr_in    sender{};
     socklen_t      sender_len = sizeof(sender);
 
-    time_t last_diagnostics = time(nullptr);
-
     while (true)
     {
-        const time_t now = time(nullptr);
-        if (now - last_diagnostics >= 5)
-        {
-            nrfPrintDiagnostics();
-            last_diagnostics = now;
-        }
-
         const ssize_t n = recvfrom(sock, buf, sizeof(buf), MSG_DONTWAIT,
                                    reinterpret_cast<sockaddr*>(&sender), &sender_len);
         if (n > 0)
