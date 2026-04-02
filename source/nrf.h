@@ -10,3 +10,5 @@ void demo();
 void processPacket(std::span<const uint8_t> packet);
 
 bool firstPacketReceived();
+
+void debugRequestFeedback(uint8_t robot_id);
