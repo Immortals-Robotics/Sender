@@ -1,0 +1,3 @@
+# Point clangd at the CMake-generated compilation database
+CompileFlags:
+    CompilationDatabase: out

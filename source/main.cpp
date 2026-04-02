@@ -1,4 +1,13 @@
-using namespace Immortals;
+#include <RF24/RF24.h>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <span>
+#include <stdexcept>
 
 RF24 radio(22, 0);
 
@@ -28,7 +37,7 @@ void demo()
     const bool result = radio.write(data + 1, 10);
     if (!result)
     {
-        Common::logError("Failed to send demo bytes");
+        printf("[ERROR] Failed to send demo bytes\n");
     }
 }
 
@@ -44,7 +53,7 @@ void processRecievedPacket(std::span<char> packet)
             if (packet[head + 1] == packet[head + 7] && Channel != packet[head + 1])
             {
                 Channel = packet[head + 1];
-                Common::logInfo("setting nrf channel to {}", Channel);
+                printf("[INFO] setting nrf channel to %d\n", Channel);
                 radio.setChannel(Channel);
                 head += 10;
             }
@@ -58,7 +67,7 @@ void processRecievedPacket(std::span<char> packet)
             const bool result     = radio.write(packet.data() + head + 2, packet_len);
             if (!result)
             {
-                Common::logError("Failed to send {} bytes to {}", packet_len, address[2]);
+                printf("[ERROR] Failed to send %d bytes to %d\n", packet_len, address[2]);
             }
 
             head += packet_len + 2;
@@ -68,10 +77,7 @@ void processRecievedPacket(std::span<char> packet)
 
 int main(void)
 {
-    Common::Services::Params params{std::filesystem::path{DATA_DIR} / "config.toml"};
-    Common::Services::initialize(params);
-
-    Common::logInfo("Initializing nrf24");
+    printf("[INFO] Initializing nrf24\n");
 
     bool nrf_init_result;
     try
@@ -80,13 +86,13 @@ int main(void)
     }
     catch (const std::runtime_error &error)
     {
-        Common::logCritical("Failed to initialize nrf24: {}", error);
+        printf("[CRITICAL] Failed to initialize nrf24: %s\n", error.what());
         return -1;
     }
 
     if (!nrf_init_result)
     {
-        Common::logCritical("Failed to initialize nrf24");
+        printf("[CRITICAL] Failed to initialize nrf24\n");
         return -1;
     }
 
@@ -111,25 +117,61 @@ int main(void)
 
     radio.printPrettyDetails();
 
-    std::unique_ptr<Common::UdpClient> udp_client =
-        std::make_unique<Common::UdpClient>(Common::NetworkAddress{"224.5.92.5", 60005});
+    // UDP socket setup
+    const int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        printf("[CRITICAL] Failed to create UDP socket\n");
+        return -1;
+    }
+
+    const int reuse = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(60005);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(sock, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0)
+    {
+        printf("[CRITICAL] Failed to bind UDP socket\n");
+        close(sock);
+        return -1;
+    }
+
+    ip_mreq mreq{};
+    mreq.imr_multiaddr.s_addr = inet_addr("224.5.92.5");
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    if (setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0)
+    {
+        printf("[CRITICAL] Failed to join multicast group\n");
+        close(sock);
+        return -1;
+    }
+
+    static char buf[4096];
+    sockaddr_in sender{};
+    socklen_t   sender_len = sizeof(sender);
 
     while (true)
     {
-        std::span<char> packet{};
-        if (udp_client->receiveRaw(&packet))
+        const ssize_t n = recvfrom(sock, buf, sizeof(buf), MSG_DONTWAIT,
+                                   reinterpret_cast<sockaddr *>(&sender), &sender_len);
+        if (n > 0)
         {
-            Common::logDebug("received {} bytes from {}", packet.size(), udp_client->getLastReceiveEndpoint());
-            processRecievedPacket(packet);
+            printf("[DEBUG] received %zd bytes from %s:%d\n",
+                   n, inet_ntoa(sender.sin_addr), ntohs(sender.sin_port));
+            processRecievedPacket({buf, static_cast<size_t>(n)});
         }
 
         if (!firstPacketRecieved)
         {
-            Common::logDebug("sending demo bytes");
+            printf("[DEBUG] sending demo bytes\n");
             demo();
             delay(10);
         }
     }
 
-    Common::Services::shutdown();
+    close(sock);
+    return 0;
 }

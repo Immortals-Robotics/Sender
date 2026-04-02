@@ -1,0 +1,24 @@
+[
+    {
+        "label": "sender: configure debug",
+        "command": "cmake --preset debug",
+        "cwd": "$ZED_WORKTREE_ROOT"
+    },
+    {
+        "label": "sender: configure release",
+        "command": "cmake --preset release",
+        "cwd": "$ZED_WORKTREE_ROOT"
+    },
+    {
+        "label": "sender: build",
+        "command": "cmake --build out",
+        "cwd": "$ZED_WORKTREE_ROOT"
+    },
+    {
+        "label": "sender: build and run",
+        "command": "cmake --build out && sudo ./out/sender",
+        "cwd": "$ZED_WORKTREE_ROOT",
+        "use_new_terminal": true,
+        "reveal": "always"
+    }
+]
