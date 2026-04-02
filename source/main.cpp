@@ -1,105 +1,139 @@
 #include <RF24/RF24.h>
 
+#include <ctime>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <span>
 #include <stdexcept>
 
+static constexpr uint8_t  DEMO_PAYLOAD_SIZE  = 10;
+static constexpr uint8_t  CHANNEL_CHANGE_ID  = 80;
+static constexpr int      DEFAULT_CHANNEL    = 110;
+static constexpr uint16_t UDP_PORT           = 60005;
+static constexpr const char* MULTICAST_GROUP = "224.5.92.5";
+
+// CE pin 22, SPI device 0 (spidev0.0)
 RF24 radio(22, 0);
 
-int  Channel             = 110;
-bool firstPacketRecieved = false;
+int     channel             = DEFAULT_CHANNEL;
+bool    firstPacketReceived = false;
+uint8_t address[5]          = {110, 110, 8, 110, 110};
 
-uint8_t address[5] = {110, 110, 8, 110, 110};
-
-void demo()
+void sendToRobot(uint8_t robot_id, const uint8_t* payload, uint8_t len)
 {
-    uint8_t data[11];
-    data[0]  = 25;
-    data[1]  = 1;
-    data[2]  = 0;
-    data[3]  = 0;
-    data[4]  = 0;
-    data[5]  = 0;
-    data[6]  = 0;
-    data[7]  = 0;
-    data[8]  = 0;
-    data[9]  = 0;
-    data[10] = 0;
-
-    address[2] = data[0];
+    address[2] = robot_id;
     radio.openWritingPipe(address);
 
-    const bool result = radio.write(data + 1, 10);
+    const bool result = radio.write(payload, len);
     if (!result)
     {
-        printf("[ERROR] Failed to send demo bytes\n");
+        printf("[ERROR] Failed to send %d bytes to robot %d\n", len, robot_id);
+    }
+
+    if (radio.failureDetected)
+    {
+        printf("[ERROR] Radio failure detected, reinitializing...\n");
+        radio.begin();
+        radio.setPayloadSize(DEMO_PAYLOAD_SIZE);
+        radio.setDataRate(RF24_250KBPS);
+        radio.setCRCLength(RF24_CRC_8);
+        radio.setPALevel(RF24_PA_MAX);
+        radio.setAutoAck(false);
+        radio.setChannel(channel);
+        radio.stopListening();
+        radio.flush_tx();
+        radio.failureDetected = false;
     }
 }
 
-void processRecievedPacket(std::span<char> packet)
+void demo()
 {
-    firstPacketRecieved = true;
+    uint8_t payload[DEMO_PAYLOAD_SIZE] = {};
+    payload[0] = 1;
+    sendToRobot(25, payload, DEMO_PAYLOAD_SIZE);
+}
+
+void processPacket(std::span<const uint8_t> packet)
+{
+    firstPacketReceived = true;
 
     unsigned head = 0;
     while (head < packet.size())
     {
-        if (packet[head] == 80)
+        const uint8_t id = packet[head];
+
+        if (id == CHANNEL_CHANGE_ID)
         {
-            if (packet[head + 1] == packet[head + 7] && Channel != packet[head + 1])
+            // need at least 8 bytes for the channel change packet
+            if (head + 8 > packet.size())
+                break;
+
+            const uint8_t new_channel = packet[head + 1];
+            // validate: byte 1 must equal byte 7
+            if (packet[head + 7] == new_channel && channel != new_channel)
             {
-                Channel = packet[head + 1];
-                printf("[INFO] setting nrf channel to %d\n", Channel);
-                radio.setChannel(Channel);
-                head += 10;
+                channel = new_channel;
+                printf("[INFO] Setting NRF channel to %d\n", channel);
+                radio.setChannel(channel);
             }
+
+            head += 10;
         }
         else
         {
-            address[2] = packet[head];
-            radio.openWritingPipe(address);
+            // need at least 2 bytes for id + len
+            if (head + 2 > packet.size())
+                break;
 
-            const int  packet_len = packet[head + 1];
-            const bool result     = radio.write(packet.data() + head + 2, packet_len);
-            if (!result)
-            {
-                printf("[ERROR] Failed to send %d bytes to %d\n", packet_len, address[2]);
-            }
+            const uint8_t packet_len = packet[head + 1];
+
+            // copy only what's available, zero-pad the rest
+            uint8_t payload[256] = {};
+            const uint8_t available = static_cast<uint8_t>(
+                std::min<size_t>(packet_len, packet.size() - head - 2));
+            memcpy(payload, packet.data() + head + 2, available);
+
+            sendToRobot(id, payload, packet_len);
 
             head += packet_len + 2;
         }
     }
 }
 
-int main(void)
+int main()
 {
-    printf("[INFO] Initializing nrf24\n");
+    printf("[INFO] Initializing NRF24\n");
 
-    bool nrf_init_result;
+    bool init_result;
     try
     {
-        nrf_init_result = radio.begin();
+        init_result = radio.begin();
     }
-    catch (const std::runtime_error &error)
+    catch (const std::runtime_error& e)
     {
-        printf("[CRITICAL] Failed to initialize nrf24: %s\n", error.what());
+        printf("[CRITICAL] Failed to initialize NRF24: %s\n", e.what());
         return -1;
     }
 
-    if (!nrf_init_result)
+    if (!init_result)
     {
-        printf("[CRITICAL] Failed to initialize nrf24\n");
+        printf("[CRITICAL] Failed to initialize NRF24\n");
         return -1;
     }
 
-    // TODO: verify
-    radio.setPayloadSize(10);
-
+    radio.setPayloadSize(DEMO_PAYLOAD_SIZE);
+    radio.setDataRate(RF24_250KBPS);
+    radio.setCRCLength(RF24_CRC_8);
     radio.setPALevel(RF24_PA_MAX);
+    radio.setAutoAck(false);
+    radio.setChannel(channel);
 
     address[2] = 8;
     radio.openWritingPipe(address);
@@ -107,13 +141,9 @@ int main(void)
     address[2] = 30;
     radio.openReadingPipe(1, address);
 
-    radio.setChannel(Channel);
-
-    // TODO: verify
-    radio.setAutoAck(false);
-
-    // put radio in TX mode
+    // TX mode
     radio.stopListening();
+    radio.flush_tx();
 
     radio.printPrettyDetails();
 
@@ -130,9 +160,9 @@ int main(void)
 
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
-    addr.sin_port        = htons(60005);
+    addr.sin_port        = htons(UDP_PORT);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (bind(sock, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0)
+    if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
     {
         printf("[CRITICAL] Failed to bind UDP socket\n");
         close(sock);
@@ -140,7 +170,7 @@ int main(void)
     }
 
     ip_mreq mreq{};
-    mreq.imr_multiaddr.s_addr = inet_addr("224.5.92.5");
+    mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_GROUP);
     mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     if (setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0)
     {
@@ -149,24 +179,34 @@ int main(void)
         return -1;
     }
 
-    static char buf[4096];
-    sockaddr_in sender{};
-    socklen_t   sender_len = sizeof(sender);
+    printf("[INFO] Listening on %s:%d\n", MULTICAST_GROUP, UDP_PORT);
+
+    static uint8_t buf[4096];
+    sockaddr_in    sender{};
+    socklen_t      sender_len = sizeof(sender);
+
+    time_t last_diagnostics = time(nullptr);
 
     while (true)
     {
-        const ssize_t n = recvfrom(sock, buf, sizeof(buf), MSG_DONTWAIT,
-                                   reinterpret_cast<sockaddr *>(&sender), &sender_len);
-        if (n > 0)
+        const time_t now = time(nullptr);
+        if (now - last_diagnostics >= 5)
         {
-            printf("[DEBUG] received %zd bytes from %s:%d\n",
-                   n, inet_ntoa(sender.sin_addr), ntohs(sender.sin_port));
-            processRecievedPacket({buf, static_cast<size_t>(n)});
+            radio.printPrettyDetails();
+            last_diagnostics = now;
         }
 
-        if (!firstPacketRecieved)
+        const ssize_t n = recvfrom(sock, buf, sizeof(buf), MSG_DONTWAIT,
+                                   reinterpret_cast<sockaddr*>(&sender), &sender_len);
+        if (n > 0)
         {
-            printf("[DEBUG] sending demo bytes\n");
+            printf("[DEBUG] Received %zd bytes from %s:%d\n",
+                   n, inet_ntoa(sender.sin_addr), ntohs(sender.sin_port));
+            processPacket({buf, static_cast<size_t>(n)});
+        }
+
+        if (!firstPacketReceived)
+        {
             demo();
             delay(10);
         }
